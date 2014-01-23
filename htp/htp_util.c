@@ -38,6 +38,46 @@
 
 #include "htp_private.h"
 
+static uint64_t memuse = 0;
+
+uint64_t htp_memory_get_memuse(void) {
+    return memuse;
+}
+
+void *htp_malloc(size_t size) {
+    void *ptr = malloc(size);
+    if (ptr != NULL)
+        __sync_add_and_fetch(&memuse, size);
+    return ptr;
+}
+
+void *htp_calloc(size_t nmemb, size_t size) {
+    void *ptr = calloc(nmemb, size);
+    if (ptr != NULL)
+        __sync_add_and_fetch(&memuse, (nmemb * size));
+    return ptr;
+}
+
+void *htp_realloc(void *ptr, size_t size, size_t oldsize) {
+    int64_t diff = size - oldsize;
+    void *outptr = realloc(ptr, size);
+    if (outptr != NULL)
+        __sync_add_and_fetch(&memuse, diff);
+    return outptr;
+}
+
+void htp_free(void *ptr, size_t size) {
+    __sync_sub_and_fetch(&memuse, size);
+    free(ptr);
+}
+
+char *htp_strdup(const char *s) {
+    char *ptr = strdup(s);
+    if (ptr != NULL)
+        __sync_add_and_fetch(&memuse, strlen(ptr));
+    return ptr;
+}
+
 /**
  * Is character a linear white space character?
  *
@@ -361,7 +401,7 @@ void htp_log(htp_connp_t *connp, const char *file, int line, enum htp_log_level_
 
     // Create a new log entry.
 
-    htp_log_t *log = calloc(1, sizeof (htp_log_t));
+    htp_log_t *log = htp_calloc(1, sizeof (htp_log_t));
     if (log == NULL) return;
 
     log->connp = connp;
@@ -369,7 +409,7 @@ void htp_log(htp_connp_t *connp, const char *file, int line, enum htp_log_level_
     log->line = line;
     log->level = level;
     log->code = code;
-    log->msg = strdup(buf);
+    log->msg = htp_strdup(buf);
 
     htp_list_add(connp->conn->messages, log);
 
@@ -638,7 +678,7 @@ int htp_parse_uri(bstr *input, htp_uri_t **uri) {
     // Allow a htp_uri_t structure to be provided on input,
     // but allocate a new one if the structure is NULL.
     if (*uri == NULL) {
-        *uri = calloc(1, sizeof (htp_uri_t));
+        *uri = htp_calloc(1, sizeof (htp_uri_t));
         if (*uri == NULL) return HTP_ERROR;
     }
 
@@ -2556,11 +2596,11 @@ void htp_uri_free(htp_uri_t *uri) {
     bstr_free(uri->query);
     bstr_free(uri->fragment);
 
-    free(uri);
+    htp_free(uri, sizeof(htp_uri_t));
 }
 
 htp_uri_t *htp_uri_alloc() {
-    htp_uri_t *u = calloc(1, sizeof (htp_uri_t));
+    htp_uri_t *u = htp_calloc(1, sizeof (htp_uri_t));
     if (u == NULL) return NULL;
 
     u->port_number = -1;
